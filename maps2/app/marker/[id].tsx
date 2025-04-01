@@ -1,38 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import {
-  StyleSheet,
-  View,
-  Text,
-  Button,
-  FlatList,
-  Image,
-  TouchableOpacity,
-  Modal,
-  Dimensions,
-} from 'react-native';
+import {Alert, StyleSheet, View, Text, FlatList, Image, TouchableOpacity, Modal, Dimensions } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMarkers } from '../../context/MarkerContext';
-import { Ionicons } from '@expo/vector-icons'; // Для иконок
+import { Ionicons } from '@expo/vector-icons';
 
 export default function MarkerDetails() {
   const { id } = useLocalSearchParams();
-  const { markers, updateMarker } = useMarkers();
+  const markerId = typeof id === 'string' ? parseInt(id, 10) : Number(id[0]);
+  const { markers, addImageToMarker, getMarkerImages, deleteImage, deleteMarker } = useMarkers();
   const router = useRouter();
   const [images, setImages] = useState<string[]>([]);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null); // Для открытия изображения в полном размере
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
-  const marker = markers.find((m) => m.id === Number(id));
+  const marker = markers.find((m) => m.id === markerId);
 
-  // Синхронизируем images с данными маркера
+
   useEffect(() => {
-    if (marker) {
-      setImages(marker.images);
-    }
-  }, [marker]);
+    const loadImages = async () => {
+      if (markerId) {
+        const loadedImages = await getMarkerImages(markerId);
+        setImages(loadedImages.map(img => img.uri));
+      }
+    };
+    loadImages();
+  }, [markerId]);
 
-  // Выбор изображения из галереи
   const pickImage = async () => {
+    if (!markerId) return;
+    
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
@@ -40,22 +36,24 @@ export default function MarkerDetails() {
     });
 
     if (!result.canceled) {
-      const newImages = [...images, result.assets[0].uri];
-      setImages(newImages);
-      if (marker) {
-        updateMarker(marker.id, newImages);
-      }
+      await addImageToMarker(markerId, result.assets[0].uri);
+      const updatedImages = await getMarkerImages(markerId);
+      setImages(updatedImages.map(img => img.uri));
     }
   };
 
-  // Удаление изображения
-  const deleteImage = (uri: string) => {
-    const newImages = images.filter((image) => image !== uri);
-    setImages(newImages);
-    if (marker) {
-      updateMarker(marker.id, newImages);
+  const handleDeleteImage = async (uri: string) => {
+    if (!markerId) return;
+    
+    const allImages = await getMarkerImages(markerId);
+    const imageToDelete = allImages.find(img => img.uri === uri);
+    
+    if (imageToDelete) {
+      await deleteImage(imageToDelete.id);
+      setImages(prev => prev.filter(img => img !== uri));
     }
   };
+
 
   // Открытие изображения в полном размере
   const openImage = (uri: string) => {
@@ -65,6 +63,32 @@ export default function MarkerDetails() {
   // Закрытие модального окна
   const closeImage = () => {
     setSelectedImage(null);
+  };
+
+  const handleDelete = async () => {
+    Alert.alert(
+      'Удалить маркер?',
+      'Вы уверены, что хотите удалить этот маркер?',
+      [
+        {
+          text: 'Отмена',
+          style: 'cancel',
+        },
+        {
+          text: 'Удалить',
+          onPress: async () => {
+            try {
+              await deleteMarker(Number(id));
+              router.back(); // Возвращаемся на карту
+              Alert.alert('Маркер удалён');
+            } catch (error) {
+              Alert.alert('Ошибка', 'Не удалось удалить маркер');
+            }
+          },
+          style: 'destructive',
+        },
+      ]
+    );
   };
 
   if (!marker) {
@@ -97,7 +121,7 @@ export default function MarkerDetails() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.deleteIcon}
-              onPress={() => deleteImage(item)}
+              onPress={() => handleDeleteImage(item)}
             >
               <Ionicons name="trash-outline" size={24} color="red" />
             </TouchableOpacity>
@@ -114,6 +138,14 @@ export default function MarkerDetails() {
           <Image source={{ uri: selectedImage! }} style={styles.fullImage} />
         </View>
       </Modal>
+
+      <TouchableOpacity 
+        style={styles.deleteButton}
+        onPress={handleDelete}
+      >
+        <Ionicons name="trash-outline" size={24} color="red" />
+        <Text style={styles.deleteButtonText}>Удалить маркер</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -141,12 +173,12 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   addButton: {
-    backgroundColor: '#007AFF', // Синий цвет, как у системной кнопки
+    backgroundColor: '#007AFF',
     paddingVertical: 12,
     paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',
-    marginBottom: 20, // Отступ снизу
+    marginBottom: 20,
   },
   addButtonText: {
     color: 'white',
@@ -177,5 +209,18 @@ const styles = StyleSheet.create({
     top: 40,
     right: 20,
     zIndex: 1,
+  },
+  deleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    marginBottom: 10,
+    borderRadius: 10,
+  },
+  deleteButtonText: {
+    color: 'red',
+    marginLeft: 10,
+    fontSize: 18,
   },
 });
